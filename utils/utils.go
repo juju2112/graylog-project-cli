@@ -3,10 +3,12 @@ package utils
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"github.com/Graylog2/graylog-project-cli/logger"
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -113,4 +115,63 @@ func FilesIdentical(file1, file2 string) bool {
 	}
 
 	return bytes.Equal(buf1, buf2)
+}
+
+func SetPackageJsonVersion(filename, version string) error {
+	// Make sure to match the correct version string in package.json
+	re := regexp.MustCompile(`^\s{2}"version": "\d+\.\d+\.\d+-?.*?",`)
+
+	err := ReplaceInFile(filename, re, fmt.Sprintf(`  "version": "%s",`, version))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ReplaceInFile(filename string, re *regexp.Regexp, replacement string) error {
+	absFilename, err := filepath.Abs(filename)
+	if err != nil {
+		return err
+	}
+
+	fileInfo, err := os.Stat(absFilename)
+	if err != nil {
+		return err
+	}
+
+	buf, err := ioutil.ReadFile(absFilename)
+	if err != nil {
+		return err
+	}
+
+	lines := make([]string, 0)
+
+	for _, line := range strings.Split(string(buf), "\n") {
+		if re.Match([]byte(line)) {
+			lines = append(lines, re.ReplaceAllString(line, replacement))
+		} else {
+			lines = append(lines, line)
+		}
+	}
+
+	f, err := ioutil.TempFile(filepath.Dir(absFilename), fileInfo.Name())
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write([]byte(strings.Join(lines, "\n")))
+	if err != nil {
+		return nil
+	}
+
+	if err := os.Rename(f.Name(), absFilename); err != nil {
+		return err
+	}
+
+	if err := os.Chmod(absFilename, fileInfo.Mode()); err != nil {
+		return err
+	}
+
+	return nil
 }
