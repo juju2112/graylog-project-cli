@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/Graylog2/graylog-project-cli/apply"
+	"github.com/Graylog2/graylog-project-cli/gh"
 	"github.com/Graylog2/graylog-project-cli/git"
 	"github.com/Graylog2/graylog-project-cli/logger"
 	"github.com/Graylog2/graylog-project-cli/manifest"
@@ -56,6 +57,12 @@ func applyManifestInDirectory(path string, callback utils.DirectoryCallback) {
 
 func applyManifestCommand(cmd *cobra.Command, args []string) {
 	logger.SetPrefix("[graylog-project]")
+
+	githubAccessToken := os.Getenv("GPC_GITHUB_TOKEN")
+	if githubAccessToken == "" {
+		logger.Fatal("ERROR: Missing GPC_GITHUB_TOKEN environment variable")
+	}
+	githubClient := gh.NewGitHubClient(githubAccessToken)
 
 	t := time.Now()
 	mavenProfiles := []string{"release"}
@@ -113,6 +120,10 @@ func applyManifestCommand(cmd *cobra.Command, args []string) {
 			}
 		})
 	})
+
+	// Disabling GitHub branch protection so we can directly commit version changes
+	msg("Disabling GitHub branch protection")
+	disableBranchProtection(proj, githubClient)
 
 	// Set release version in all web modules
 	msg("Setting release version in all web modules")
@@ -211,6 +222,10 @@ func applyManifestCommand(cmd *cobra.Command, args []string) {
 		})
 	})
 
+	// This needs to be done at the very end, after we create the new branch
+	msg("Enabling GitHub branch protection again")
+	enableBranchProtection(proj, githubClient)
+
 	logger.Info("DONE! - took: %s", time.Since(t))
 }
 
@@ -258,6 +273,44 @@ func applyManifestUpdateVersions(msg func(string), proj project.Project, applier
 		}
 		for _, dep := range pom.DependencyManagement {
 			checkDep(module, dep)
+		}
+	})
+}
+
+func disableBranchProtection(proj project.Project, githubClient gh.Client) {
+	apply.ForEachModule(proj, false, func(module project.Module) {
+		// We currently only use branch protection for the server module
+		if module.Server {
+			owner := "Graylog2"
+			repo := "graylog2-server"
+			branch := module.ApplyFromRevision()
+
+			if err := githubClient.DisableBranchProtection(owner, repo, branch); err != nil {
+				logger.Fatal("ERROR: Unable to disable branch protection for %s/%s@%s: %s", owner, repo, branch, err)
+			}
+		}
+	})
+}
+
+func enableBranchProtection(proj project.Project, githubClient gh.Client) {
+	apply.ForEachModule(proj, false, func(module project.Module) {
+		// We currently only use branch protection for the server module
+		if module.Server {
+			owner := "Graylog2"
+			repo := "graylog2-server"
+			branch := module.ApplyFromRevision()
+			newBranch := module.ApplyNewBranch()
+
+			if err := githubClient.EnableBranchProtection(owner, repo, branch); err != nil {
+				logger.Error("ERROR: Unable to enable branch protection for %s/%s@%s: %s", owner, repo, branch, err)
+			}
+
+			// Also make sure to protect the new branch if we create one
+			if newBranch != "" {
+				if err := githubClient.EnableBranchProtection(owner, repo, newBranch); err != nil {
+					logger.Error("ERROR: Unable to enable branch protection for %s/%s@%s: %s", owner, repo, newBranch, err)
+				}
+			}
 		}
 	})
 }
