@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"github.com/Graylog2/graylog-project-cli/logger"
 	"github.com/fatih/color"
+	"github.com/pkg/errors"
 	"os/exec"
 	"strings"
 )
@@ -53,6 +54,24 @@ func GitValue(commands ...string) string {
 	logOutputBuffer(stderr.Bytes())
 
 	return strings.TrimSuffix(string(out), "\n")
+}
+
+func GitValueE(commands ...string) (string, error) {
+	command := exec.Command("git", commands...)
+	out, err := command.Output()
+	if err != nil {
+		return "", errors.Wrapf(err, "error executing: %s %s", command.Path, strings.Join(command.Args, " "))
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
+
+func ToplevelPath() (string, error) {
+	path, err := GitValueE("rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func GitErrOk(commands ...string) {
